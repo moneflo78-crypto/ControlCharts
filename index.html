@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Control Charts SPA</title>
+  <link href="./src/style.css" rel="stylesheet">
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans min-h-screen">
+  <div class="container mx-auto p-4 max-w-7xl">
+
+    <header class="bg-white shadow rounded-lg p-6 mb-6 flex justify-between items-center border-t-4 border-blue-600">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-800">Sistema di Gestione Carte di Controllo</h1>
+        <p class="text-sm text-slate-500 mt-1">Valutazione regole di Westgard per Batch LIMS</p>
+      </div>
+      <div class="flex space-x-2">
+         <button id="btn-export-config" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-sm font-medium transition">Esporta DB QC</button>
+         <label for="import-config" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-sm font-medium transition cursor-pointer">
+           Importa DB QC
+           <input type="file" id="import-config" class="hidden" accept=".json" />
+         </label>
+      </div>
+    </header>
+
+    <!-- TAB NAV -->
+    <div class="flex space-x-1 mb-4 bg-white p-1 rounded-lg shadow inline-block">
+      <button id="tab-upload" class="px-4 py-2 rounded font-semibold bg-blue-100 text-blue-700">1. Upload Sequenza</button>
+      <button id="tab-config" class="px-4 py-2 rounded font-semibold text-slate-600 hover:bg-slate-50">2. Anagrafica QC</button>
+      <button id="tab-charts" class="px-4 py-2 rounded font-semibold text-slate-600 hover:bg-slate-50 hidden">3. Carte e Alert</button>
+    </div>
+
+    <!-- SEZIONE 1: UPLOAD -->
+    <div id="section-upload" class="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 class="text-xl font-bold mb-4">Carica il tracciato Excel</h2>
+      <div id="drop-zone" class="border-2 border-dashed border-slate-300 rounded-lg p-10 text-center hover:bg-slate-50 cursor-pointer transition">
+        <svg xmlns="http://www.w3.org/20svg" class="mx-auto h-12 w-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+        </svg>
+        <p class="mt-2 text-sm text-slate-600">Trascina qui il file Excel o clicca per selezionarlo</p>
+        <input type="file" id="file-input" class="hidden" accept=".xlsx, .xls" />
+      </div>
+      <div id="upload-status" class="mt-4 text-sm font-medium hidden"></div>
+    </div>
+
+    <!-- SEZIONE 2: ANAGRAFICA QC -->
+    <div id="section-config" class="bg-white shadow rounded-lg p-6 mb-6 hidden">
+      <h2 class="text-xl font-bold mb-4">Configurazione Carte (Media e SD)</h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Parametro</label>
+          <input type="text" id="cfg-param" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="es. Pb" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Sample_ID (QC)</label>
+          <input type="text" id="cfg-qc" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="es. CRM_LOW" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Target (Media $\mu$)</label>
+          <input type="number" step="any" id="cfg-mean" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Dev. Standard ($\sigma$)</label>
+          <input type="number" step="any" id="cfg-sd" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" />
+        </div>
+      </div>
+      <button id="btn-save-cfg" class="px-4 py-2 bg-blue-600 text-white rounded shadow hover:bg-blue-700">Salva Configurazione</button>
+
+      <h3 class="text-lg font-bold mt-8 mb-2">Configurazioni Attuali</h3>
+      <pre id="cfg-display" class="bg-slate-800 text-slate-100 p-4 rounded text-sm overflow-auto max-h-64"></pre>
+    </div>
+
+    <!-- SEZIONE 3: CARTE, ALERT E EXPORT -->
+    <div id="section-charts" class="hidden">
+
+      <!-- Controlli Filtro -->
+      <div class="bg-white shadow rounded-lg p-4 mb-6 flex items-center space-x-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Seleziona Parametro</label>
+          <select id="select-param" class="mt-1 block w-48 rounded-md border-slate-300 shadow-sm border p-2"></select>
+        </div>
+        <div class="mt-6 flex-1 text-right">
+           <span id="batch-status-badge" class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-slate-100 text-slate-800">In attesa...</span>
+        </div>
+      </div>
+
+      <!-- Area Grafici -->
+      <div id="charts-container" class="space-y-6 mb-6">
+        <!-- I grafici verranno generati dinamicamente qui per ogni QC del parametro selezionato -->
+      </div>
+
+      <!-- Log delle violazioni -->
+      <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h3 class="text-lg font-bold mb-4">Log Validazione / Violazioni Westgard</h3>
+        <div class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-slate-200">
+            <thead class="bg-slate-50">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Sample_ID (QC)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Batch_ID</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Risultato</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Z-Score</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Regola Violata</th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Stato</th>
+              </tr>
+            </thead>
+            <tbody id="violations-tbody" class="bg-white divide-y divide-slate-200">
+              <!-- Righe dinamiche -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Override e Export -->
+      <div class="bg-white shadow rounded-lg p-6 border-t-4 border-slate-300" id="export-panel">
+        <div id="override-form" class="hidden mb-6 bg-red-50 p-4 rounded border border-red-200">
+           <h3 class="text-md font-bold text-red-800 mb-2">Blocco Sequenza: Override Richiesto</h3>
+           <p class="text-sm text-red-700 mb-4">La sequenza presenta errori sistematici/casuali (rosse). Per esportare, devi compilare il form di override.</p>
+           <div class="space-y-3">
+             <input type="text" id="ovr-reason" class="block w-full rounded border-red-300 shadow-sm p-2 text-sm" placeholder="Motivazione tecnica della deviazione..." />
+             <input type="text" id="ovr-action" class="block w-full rounded border-red-300 shadow-sm p-2 text-sm" placeholder="Azione correttiva intrapresa..." />
+             <input type="text" id="ovr-authorizer" class="block w-full rounded border-red-300 shadow-sm p-2 text-sm" placeholder="Nome Responsabile autorizzante..." />
+             <button id="btn-submit-override" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm font-bold">Applica Override e Sblocca</button>
+           </div>
+        </div>
+
+        <div class="flex justify-between items-center">
+          <p class="text-sm text-slate-600">Genera il file finale per l'acquisizione LIMS.</p>
+          <button id="btn-export-lims" class="px-6 py-3 bg-green-600 text-white font-bold rounded shadow hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            Esporta File per LIMS
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
