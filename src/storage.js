@@ -4,17 +4,24 @@
  */
 
 const CONFIG_KEY = 'qc_config';
+const HISTORY_KEY = 'qc_history';
 
 /**
  * Salva la configurazione per un parametro e un determinato Sample_ID QC.
- * Struttura: { [Parameter]: { [Sample_ID]: { mean: number, sd: number } } }
+ * Struttura: { [Parameter]: { [Sample_ID]: { mean: number, sd: number, ... } } }
  */
-export function saveConfig(parameter, sampleId, mean, sd) {
+export function saveConfig(parameter, sampleId, params) {
   const config = getConfig();
   if (!config[parameter]) {
     config[parameter] = {};
   }
-  config[parameter][sampleId] = { mean: parseFloat(mean), sd: parseFloat(sd) };
+  config[parameter][sampleId] = {
+    mean: parseFloat(params.mean),
+    sd: params.sd !== '' ? parseFloat(params.sd) : null,
+    uncertPrep: params.uncertPrep !== '' ? parseFloat(params.uncertPrep) : null,
+    uncertMeas: params.uncertMeas !== '' ? parseFloat(params.uncertMeas) : null,
+    nInHouse: params.nInHouse !== '' ? parseInt(params.nInHouse, 10) : 20
+  };
   localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
 }
 
@@ -56,4 +63,49 @@ export function importConfigJSON(jsonString) {
     console.error("Errore nell'importazione della configurazione:", e);
     return false;
   }
+}
+
+/**
+ * Salva i dati storici dei campioni QC in localStorage.
+ * Effettua il merge con i dati esistenti, evitando duplicati basati su Batch_ID e Sample_ID.
+ * @param {Array<Object>} newQcData - I nuovi record QC da inserire.
+ */
+export function appendQCHistory(newQcData) {
+  const existingHistory = getQCHistory();
+
+  // Utilizziamo una mappa per sovrascrivere o ignorare duplicati (Batch_ID + Sample_ID)
+  // Assumiamo che Parameter sia lo stesso per un dato Sample_ID, ma includiamolo nella chiave se serve.
+  // Chiave = Batch_ID + '|' + Sample_ID + '|' + Parameter
+  const historyMap = new Map();
+
+  existingHistory.forEach(record => {
+    const key = `${record.Batch_ID}|${record.Sample_ID}|${record.Parameter}`;
+    historyMap.set(key, record);
+  });
+
+  newQcData.forEach(record => {
+    const key = `${record.Batch_ID}|${record.Sample_ID}|${record.Parameter}`;
+    // Aggiungiamo o aggiorniamo il record
+    historyMap.set(key, record);
+  });
+
+  const mergedHistory = Array.from(historyMap.values());
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(mergedHistory));
+  return mergedHistory;
+}
+
+/**
+ * Recupera tutti i dati storici QC salvati nel localStorage.
+ * @returns {Array<Object>}
+ */
+export function getQCHistory() {
+  const data = localStorage.getItem(HISTORY_KEY);
+  return data ? JSON.parse(data) : [];
+}
+
+/**
+ * Cancella lo storico QC.
+ */
+export function clearQCHistory() {
+  localStorage.removeItem(HISTORY_KEY);
 }
