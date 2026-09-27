@@ -1,5 +1,5 @@
 import { readExcelFile, getQCSamples, exportToLIMS } from './excelHandler.js';
-import { saveConfig, getConfig, getQCParams, exportConfigJSON, importConfigJSON } from './storage.js';
+import { saveConfig, getConfig, getQCParams, exportConfigJSON, importConfigJSON, appendQCHistory, getQCHistory } from './storage.js';
 import { evaluateWestgardRules } from './westgard.js';
 import { renderControlChart } from './chartRenderer.js';
 
@@ -61,12 +61,20 @@ async function handleFile(file) {
 
   try {
     const data = await readExcelFile(file);
+    // Identifica e salva solo i QC in locale per accumulare la history
+    const newQcSamples = getQCSamples(data);
+    const updatedHistory = appendQCHistory(newQcSamples);
+
+    // Per questa sessione, manteniamo i dati appena caricati per esportarli,
+    // ma usiamo l'intero storico QC per calcolare le carte.
     currentExcelData = data;
-    uploadStatus.textContent = `File caricato con successo: ${data.length} righe totali.`;
+    uploadStatus.textContent = `File letto: ${data.length} righe totali. Trovati ${newQcSamples.length} QC. Storico totale: ${updatedHistory.length} QC.`;
     uploadStatus.className = "mt-4 text-sm font-medium text-green-600";
 
-    // Raccogli parametri unici
-    const parameters = [...new Set(data.map(d => d.Parameter).filter(Boolean))];
+    // Raccogli parametri unici DA TUTTO LO STORICO e dal file corrente
+    const allQcParams = [...new Set(updatedHistory.map(d => d.Parameter).filter(Boolean))];
+    const fileParams = [...new Set(data.map(d => d.Parameter).filter(Boolean))];
+    const parameters = [...new Set([...fileParams, ...allQcParams])];
     const select = document.getElementById('select-param');
     select.innerHTML = '';
     parameters.forEach(p => {
@@ -99,13 +107,22 @@ document.getElementById('btn-save-cfg').addEventListener('click', () => {
   const qc = document.getElementById('cfg-qc').value.trim();
   const m = document.getElementById('cfg-mean').value;
   const s = document.getElementById('cfg-sd').value;
+  const uPrep = document.getElementById('cfg-uncert-prep').value;
+  const uMeas = document.getElementById('cfg-uncert-meas').value;
+  const nInHouse = document.getElementById('cfg-n-inhouse').value;
 
-  if (p && qc && m !== '' && s !== '') {
-    saveConfig(p, qc, m, s);
+  if (p && qc && m !== '') {
+    saveConfig(p, qc, {
+      mean: m,
+      sd: s,
+      uncertPrep: uPrep,
+      uncertMeas: uMeas,
+      nInHouse: nInHouse
+    });
     refreshConfigDisplay();
     alert('Configurazione salvata!');
   } else {
-    alert('Compila tutti i campi!');
+    alert('Compila almeno Parametro, Sample_ID (QC) e Valore Nominale!');
   }
 });
 
@@ -137,8 +154,9 @@ document.getElementById('select-param').addEventListener('change', (e) => {
 });
 
 function processParameter(parameter) {
-  const qcData = getQCSamples(currentExcelData);
-  const paramQCData = qcData.filter(d => d.Parameter === parameter);
+  // Use the accumulated history instead of just the current file
+  const fullQCHistory = getQCHistory();
+  const paramQCData = fullQCHistory.filter(d => d.Parameter === parameter);
 
   const chartsContainer = document.getElementById('charts-container');
   chartsContainer.innerHTML = '';
@@ -150,80 +168,99 @@ function processParameter(parameter) {
   // 1. Ordiniamo TUTTI i campioni QC del parametro cronologicamente
   paramQCData.sort((a, b) => new Date(a.Analysis_Timestamp) - new Date(b.Analysis_Timestamp));
 
-  // 2. Prepariamo i dati per la valutazione calcolando preliminarmente gli Z-Score
-  // e creando un array unificato per westgard.js
-  const evalPoints = [];
-  const pointsWithConfig = [];
-
+  // 2. Prepariamo i dati per la valutazione separando per Sample_ID
+  const qcsById = {};
   for (let p of paramQCData) {
-      const cfg = getQCParams(parameter, p.Sample_ID);
-      if (!cfg) {
-          // Segnala errore bloccante se manca config per un QC
-          paramBlocked = true;
-          const tr = document.createElement('tr');
-          tr.innerHTML = `<td colspan="6" class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-bold">Configurazione mancante per ${p.Sample_ID} (Parametro: ${parameter}). Impossibile valutare.</td>`;
-          tbody.appendChild(tr);
-      } else {
-          pointsWithConfig.push(p);
-          evalPoints.push({
-             value: p.Result,
-             batchId: p.Batch_ID || 'UNKNOWN',
-             sampleId: p.Sample_ID,
-             // Pre-calcoliamo qui se necessario, oppure lasciamo fare a westgard
-             // siccome westgard accetta mean e sd globali, Dobbiamo ADATTARE westgard.js o passare z-score direttamente.
-             // Per evitare di stravolgere westgard, gli passiamo il RESULT NORMALIZZATO o trasformiamo la logica di westgard.
-             // SOLUZIONE MIGLIORE: Modificare westgard per accettare array di z-scores calcolati a monte.
-          });
-      }
+    if (!qcsById[p.Sample_ID]) qcsById[p.Sample_ID] = [];
+    qcsById[p.Sample_ID].push(p);
   }
+
+  const allPreCalculatedZScores = [];
+
+  Object.keys(qcsById).forEach((sampleId, idx) => {
+    const points = qcsById[sampleId];
+    const cfg = getQCParams(parameter, sampleId);
+
+    if (!cfg) {
+      paramBlocked = true;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td colspan="6" class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-bold">Configurazione mancante per ${sampleId} (Parametro: ${parameter}). Impossibile valutare.</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const nInHouse = cfg.nInHouse || 20;
+
+    // Calculate effective Mean and SD for each point
+    const evaluatedPoints = points.map((p, index) => {
+       let effectiveMean = cfg.mean; // Nominal value
+       let effectiveSd = cfg.sd;     // Default method SD
+
+       if (index >= nInHouse) {
+           // We have enough points, use in-house calculation from the first N points
+           const firstN = points.slice(0, nInHouse).map(pt => pt.Result);
+           const sum = firstN.reduce((a, b) => a + b, 0);
+           effectiveMean = sum / nInHouse;
+
+           const variance = firstN.reduce((a, b) => a + Math.pow(b - effectiveMean, 2), 0) / (nInHouse - 1);
+           effectiveSd = Math.sqrt(variance);
+       }
+
+       return {
+           originalPoint: p,
+           effectiveMean: effectiveMean,
+           effectiveSd: effectiveSd,
+           evaluable: effectiveSd !== null && effectiveSd !== undefined && effectiveSd > 0,
+           batchId: p.Batch_ID || 'UNKNOWN',
+           value: p.Result
+       };
+    });
+
+    // Plot the chart
+    const chartDiv = document.createElement('div');
+    chartDiv.id = `chart-${idx}`;
+    chartDiv.className = "bg-white p-4 border rounded shadow-sm w-full h-[400px]";
+    chartsContainer.appendChild(chartDiv);
+
+    setTimeout(() => {
+      renderControlChart(chartDiv.id, evaluatedPoints, `${parameter} - ${sampleId}`);
+    }, 50);
+
+    // Compute Z-Scores for unified Westgard Evaluation
+    evaluatedPoints.forEach(ep => {
+       if (ep.evaluable) {
+         ep.zScore = calculateZScore(ep.value, ep.effectiveMean, ep.effectiveSd);
+         allPreCalculatedZScores.push(ep);
+       } else {
+         // Create a dummy record indicating it's not evaluable
+         const tr = document.createElement('tr');
+         tr.innerHTML = `
+           <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-900">${ep.originalPoint.Sample_ID}</td>
+           <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${ep.batchId}</td>
+           <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${ep.value}</td>
+           <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">-</td>
+           <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">Nessuna SD disponibile (Dati insufficienti)</td>
+           <td class="px-6 py-4 whitespace-nowrap">
+             <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-slate-100 text-slate-800">Non Valutabile</span>
+           </td>
+         `;
+         tbody.appendChild(tr);
+       }
+    });
+  });
 
   if(paramBlocked) {
       updateExportStatus(true);
       return;
   }
 
-  // --- RENDERING DEI GRAFICI PER SINGOLO SAMPLE_ID (come prima) ---
-  const qcsById = {};
-  pointsWithConfig.forEach(d => {
-    if (!qcsById[d.Sample_ID]) qcsById[d.Sample_ID] = [];
-    qcsById[d.Sample_ID].push(d);
-  });
+  // Sort unified Z-Scores chronologically across all QC types for rules like R_4s across batches
+  allPreCalculatedZScores.sort((a, b) => new Date(a.originalPoint.Analysis_Timestamp) - new Date(b.originalPoint.Analysis_Timestamp));
 
-  Object.keys(qcsById).forEach((sampleId, idx) => {
-    const points = qcsById[sampleId];
-    const cfg = getQCParams(parameter, sampleId);
-
-    const chartDiv = document.createElement('div');
-    chartDiv.id = `chart-${idx}`;
-    chartDiv.className = "bg-white p-4 border rounded shadow-sm";
-    chartsContainer.appendChild(chartDiv);
-
-    renderControlChart(chartDiv.id, points, cfg.mean, cfg.sd, `${parameter} - ${sampleId}`);
-  });
-
-  // --- VALUTAZIONE UNIFICATA WESTGARD (Novità per R_4s corretto) ---
-  // Modifichiamo il westgard passandogli direttamente un array di oggetti
-  // che hanno già i metadati (valore, mean, sd per quel punto)
-  // oppure aggiorniamo westgard.js (fatto nel file) per ricevere l'array con {zScore, batchId}.
-
-  // Calcoliamo lo zScore a monte per ogni punto, usando il proprio mean e sd
-
-  const preCalculatedZScores = pointsWithConfig.map(p => {
-      const cfg = getQCParams(parameter, p.Sample_ID);
-      return {
-          originalPoint: p,
-          zScore: calculateZScore(p.Result, cfg.mean, cfg.sd),
-          batchId: p.Batch_ID || 'UNKNOWN',
-          value: p.Result // non usato dalla logica modificata se ha già zScore
-      };
-  });
-
-  // Chiamiamo una variante unificata o adattata di evaluateWestgardRules.
-  // evaluateWestgardRulesZ(preCalculatedZScores) -> restituisce le violazioni
-  const violations = evaluateWestgardRulesUnified(preCalculatedZScores);
+  const violations = evaluateWestgardRulesUnified(allPreCalculatedZScores);
 
   violations.forEach(v => {
-      const pt = preCalculatedZScores[v.index].originalPoint;
+      const pt = allPreCalculatedZScores[v.index].originalPoint;
       if (v.status === 'rosso') paramBlocked = true;
 
       const tr = document.createElement('tr');

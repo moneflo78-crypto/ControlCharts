@@ -45,7 +45,7 @@
 
     <!-- SEZIONE 2: ANAGRAFICA QC -->
     <div id="section-config" class="bg-white shadow rounded-lg p-6 mb-6 hidden">
-      <h2 class="text-xl font-bold mb-4">Configurazione Carte (Media e SD)</h2>
+      <h2 class="text-xl font-bold mb-4">Anagrafica QC</h2>
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
         <div>
           <label class="block text-sm font-medium text-slate-700">Parametro</label>
@@ -56,12 +56,24 @@
           <input type="text" id="cfg-qc" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="es. CRM_LOW" />
         </div>
         <div>
-          <label class="block text-sm font-medium text-slate-700">Target (Media $\mu$)</label>
+          <label class="block text-sm font-medium text-slate-700" title="Utilizzato come Media in assenza di dati sufficienti">Valore Nominale (Target)</label>
           <input type="number" step="any" id="cfg-mean" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" />
         </div>
         <div>
-          <label class="block text-sm font-medium text-slate-700">Dev. Standard ($\sigma$)</label>
-          <input type="number" step="any" id="cfg-sd" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" />
+          <label class="block text-sm font-medium text-slate-700">Incertezza (Preparazione)</label>
+          <input type="number" step="any" id="cfg-uncert-prep" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="opzionale" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Incertezza (Misura)</label>
+          <input type="number" step="any" id="cfg-uncert-meas" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="opzionale" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700" title="Utilizzato come SD in assenza di dati sufficienti">SD Metodo (Default)</label>
+          <input type="number" step="any" id="cfg-sd" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" placeholder="opzionale" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">N Dati per calcolo In-House</label>
+          <input type="number" id="cfg-n-inhouse" value="20" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2" />
         </div>
       </div>
       <button id="btn-save-cfg" class="px-4 py-2 bg-blue-600 text-white rounded shadow hover:bg-blue-700">Salva Configurazione</button>
